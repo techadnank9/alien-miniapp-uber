@@ -1,0 +1,99 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  RIDER
+  DRIVER
+  ADMIN
+}
+
+enum RideStatus {
+  REQUESTED
+  MATCHING
+  ASSIGNED
+  STARTED
+  COMPLETED
+  CANCELLED
+}
+
+model User {
+  id          String   @id @default(uuid())
+  alienUserId String   @unique
+  name        String
+  avatarUrl   String?
+  role        UserRole @default(RIDER)
+  wallet      Wallet?
+  driver      Driver?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Driver {
+  id          String   @id @default(uuid())
+  userId      String   @unique
+  user        User     @relation(fields: [userId], references: [id])
+  vehicle     String
+  isAi        Boolean  @default(false)
+  isActive    Boolean  @default(true)
+  lat         Float?
+  lng         Float?
+  updatedAt   DateTime @updatedAt
+}
+
+model Ride {
+  id          String     @id @default(uuid())
+  riderId     String
+  rider       User       @relation(fields: [riderId], references: [id])
+  driverId    String?
+  driver      Driver?    @relation(fields: [driverId], references: [id])
+  status      RideStatus @default(REQUESTED)
+  pickupLat   Float
+  pickupLng   Float
+  dropLat     Float
+  dropLng     Float
+  fareCents   Int        @default(0)
+  currency    String     @default("ALIEN")
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+}
+
+model Wallet {
+  id        String   @id @default(uuid())
+  userId    String   @unique
+  user      User     @relation(fields: [userId], references: [id])
+  balance   Int      @default(0)
+  currency  String   @default("ALIEN")
+  txs       Tx[]
+  updatedAt DateTime @updatedAt
+}
+
+model Tx {
+  id        String   @id @default(uuid())
+  walletId  String
+  wallet    Wallet   @relation(fields: [walletId], references: [id])
+  amount    Int
+  reason    String
+  rideId    String?
+  createdAt DateTime @default(now())
+}
+
+model PaymentIntent {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  rideId    String?
+  amount    String
+  token     String
+  network   String
+  recipient String
+  invoice   String   @unique
+  status    String   @default("CREATED")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}

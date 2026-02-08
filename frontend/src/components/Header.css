@@ -1,0 +1,30 @@
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 20px 24px 0 24px;
+}
+
+.brand {
+  font-family: var(--font-display);
+  font-size: 24px;
+  letter-spacing: 0.5px;
+}
+
+.tagline {
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.user {
+  text-align: right;
+}
+
+.user-name {
+  font-weight: 600;
+}
+
+.user-token {
+  color: var(--accent-2);
+  font-size: 12px;
+}

@@ -1,0 +1,1 @@
+{"root":["./src/app.tsx","./src/api.ts","./src/main.tsx","./src/types.ts","./src/vite-env.d.ts","./src/components/driverpanel.tsx","./src/components/header.tsx","./src/components/osmmapview.tsx","./src/components/ridepanel.tsx","./src/components/rolegate.tsx","./src/components/statusbar.tsx","./src/components/walletpanel.tsx"],"version":"5.9.3"}

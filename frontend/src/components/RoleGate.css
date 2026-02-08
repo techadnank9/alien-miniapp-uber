@@ -1,0 +1,43 @@
+.gate {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 70vh;
+}
+
+.gate-card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 24px;
+  padding: 28px;
+  width: min(520px, 90vw);
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.gate-title {
+  font-size: 24px;
+  font-weight: 700;
+}
+
+.gate-sub {
+  color: var(--muted);
+}
+
+.gate-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.gate-label {
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.gate-actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
