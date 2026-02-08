@@ -23,8 +23,9 @@ async function bootstrap() {
     })
   );
   app.use(cors({ origin: true, credentials: true }));
-  await app.listen(4000);
-  console.log('API listening on http://localhost:4000');
+  const port = Number(process.env.PORT) || 4000;
+  await app.listen(port);
+  console.log(`API listening on http://localhost:${port}`);
 }
 
 bootstrap();

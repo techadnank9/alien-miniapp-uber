@@ -18,7 +18,7 @@ import { Header } from './components/Header';
 import { OSMMapView } from './components/OSMMapView';
 import { DriverPanel } from './components/DriverPanel';
 import { RoleGate, type Persona, type Mode } from './components/RoleGate';
-import { RidePanel } from './components/RidePanel';
+import { RiderFlow, type RideOption, type Suggestion } from './components/RiderFlow';
 import { StatusBar } from './components/StatusBar';
 import type { RouteLineString } from './types';
 import './styles/app.css';
@@ -68,6 +68,7 @@ export default function App() {
   const [ride, setRide] = useState<Ride>(initialRide);
   const [destination, setDestination] = useState('');
   const [pickup, setPickup] = useState<{ lat: number; lng: number } | null>(null);
+  const [pickupLabel, setPickupLabel] = useState<string>('Detecting location…');
   const [dropoff, setDropoff] = useState<{ lat: number; lng: number } | null>(null);
   const [drivers, setDrivers] = useState<
     { id: string; isAi: boolean; vehicle: string; lat?: number | null; lng?: number | null }[]
@@ -77,8 +78,16 @@ export default function App() {
   >([]);
   const [routeGeoJson, setRouteGeoJson] = useState<RouteLineString | null>(null);
   const [routeSteps, setRouteSteps] = useState<string[]>([]);
+  const [routeSummary, setRouteSummary] = useState<{ distanceKm: number; durationMin: number } | null>(null);
+  const [riderStep, setRiderStep] = useState<
+    'SEARCH' | 'OPTIONS' | 'CONFIRM' | 'MATCHING' | 'EN_ROUTE' | 'IN_RIDE' | 'COMPLETED'
+  >('SEARCH');
+  const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [selectedOptionId, setSelectedOptionId] = useState<string | null>(null);
   const [statusNote, setStatusNote] = useState<string>('');
   const socketRef = useRef<ReturnType<typeof io> | null>(null);
+  const matchTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     let mounted = true;
@@ -137,15 +146,42 @@ export default function App() {
 
   useEffect(() => {
     if (!navigator.geolocation) return;
-    navigator.geolocation.getCurrentPosition(
+    const watchId = navigator.geolocation.watchPosition(
       (pos) => {
-        setPickup({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+        const next = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+        setPickup(next);
       },
       () => {
-        setPickup({ lat: 37.7749, lng: -122.4194 });
-      }
+        setStatusNote('Location permission denied');
+      },
+      { enableHighAccuracy: true, maximumAge: 5000, timeout: 10000 }
     );
+    return () => navigator.geolocation.clearWatch(watchId);
   }, []);
+
+  useEffect(() => {
+    if (!pickup) return;
+    const controller = new AbortController();
+    const timer = window.setTimeout(async () => {
+      try {
+        const url = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${pickup.lat}&lon=${pickup.lng}`;
+        const res = await fetch(url, { signal: controller.signal });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data?.display_name) {
+          setPickupLabel(data.display_name);
+          return;
+        }
+      } catch {
+        // ignore
+      }
+      setPickupLabel(`${pickup.lat.toFixed(5)}, ${pickup.lng.toFixed(5)}`);
+    }, 400);
+    return () => {
+      controller.abort();
+      clearTimeout(timer);
+    };
+  }, [pickup]);
 
   const canRequest = useMemo(
     () => destination.trim().length > 2 && !!pickup && !!dropoff,
@@ -158,6 +194,7 @@ export default function App() {
       if (!pickup || !dropoff) {
         setRouteGeoJson(null);
         setRouteSteps([]);
+        setRouteSummary(null);
         return;
       }
       const baseUrl = import.meta.env.VITE_OSRM_URL || 'https://router.project-osrm.org';
@@ -169,6 +206,10 @@ export default function App() {
         const route = data.routes?.[0];
         if (!route) return;
         setRouteGeoJson(route.geometry);
+        setRouteSummary({
+          distanceKm: route.distance / 1000,
+          durationMin: Math.max(1, Math.round(route.duration / 60))
+        });
         const steps =
           route.legs?.[0]?.steps?.map((step: { name: string; maneuver: { type: string; modifier?: string } }) => {
             const mod = step.maneuver.modifier ? ` ${step.maneuver.modifier}` : '';
@@ -179,12 +220,79 @@ export default function App() {
       } catch {
         setRouteGeoJson(null);
         setRouteSteps([]);
+        setRouteSummary(null);
       }
     }
 
     fetchDirections();
     return () => controller.abort();
   }, [pickup, dropoff]);
+
+  useEffect(() => {
+    if (destination.trim().length < 3) {
+      setSuggestions([]);
+      return;
+    }
+    const controller = new AbortController();
+    setSearching(true);
+    const timer = window.setTimeout(async () => {
+      try {
+        const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(
+          destination
+        )}&limit=5`;
+        const res = await fetch(url, { signal: controller.signal });
+        if (!res.ok) return;
+        const data = await res.json();
+        const mapped: Suggestion[] = data.map((item: any) => ({
+          placeId: item.place_id,
+          name: item.display_name,
+          lat: Number(item.lat),
+          lng: Number(item.lon)
+        }));
+        setSuggestions(mapped);
+      } catch {
+        setSuggestions([]);
+      } finally {
+        setSearching(false);
+      }
+    }, 400);
+    return () => {
+      controller.abort();
+      clearTimeout(timer);
+    };
+  }, [destination]);
+
+  const options: RideOption[] = [
+    {
+      id: 'standard',
+      label: 'Alien Standard',
+      subtitle: 'Everyday rides',
+      etaMin: routeSummary ? routeSummary.durationMin : 6,
+      fareCents: routeSummary
+        ? Math.round((1.5 + routeSummary.distanceKm * 0.6 + routeSummary.durationMin * 0.25) * 100)
+        : 350
+    },
+    {
+      id: 'xl',
+      label: 'Alien XL',
+      subtitle: 'More space',
+      etaMin: routeSummary ? routeSummary.durationMin + 2 : 8,
+      fareCents: routeSummary
+        ? Math.round((2.2 + routeSummary.distanceKm * 0.8 + routeSummary.durationMin * 0.35) * 100)
+        : 500
+    },
+    {
+      id: 'black',
+      label: 'Alien Black',
+      subtitle: 'Premium',
+      etaMin: routeSummary ? routeSummary.durationMin + 4 : 10,
+      fareCents: routeSummary
+        ? Math.round((3.2 + routeSummary.distanceKm * 1.2 + routeSummary.durationMin * 0.5) * 100)
+        : 800
+    }
+  ];
+
+  const selectedOption = options.find((o) => o.id === selectedOptionId) ?? null;
 
   async function requestRideAction() {
     if (!canRequest) return;
@@ -200,21 +308,21 @@ export default function App() {
       });
       setRide({
         id: res.ride.id,
-        pickup: 'Current Location',
+        pickup: pickupLabel,
         dropoff: destination,
         status: res.ride.status,
-        etaMinutes: 6,
-        fareCents: res.ride.fareCents
+        etaMinutes: routeSummary?.durationMin ?? 6,
+        fareCents: selectedOption?.fareCents ?? res.ride.fareCents
       });
     } catch {
       setStatusNote('Backend offline — using local ride flow');
       setRide({
         id: 'demo-ride',
-        pickup: 'Current Location',
+        pickup: pickupLabel,
         dropoff: destination,
         status: 'MATCHING',
-        etaMinutes: 6,
-        fareCents: 1200
+        etaMinutes: routeSummary?.durationMin ?? 6,
+        fareCents: selectedOption?.fareCents ?? 1200
       });
     }
   }
@@ -296,6 +404,9 @@ export default function App() {
     const nextRole = mode === 'DRIVER' ? 'DRIVER' : 'RIDER';
     await toggleRole(nextRole);
     setDriverIsAi(persona === 'AGENT');
+    if (nextRole === 'RIDER') {
+      setRiderStep('SEARCH');
+    }
   }
 
   async function registerDriver() {
@@ -340,6 +451,46 @@ export default function App() {
     setTimeout(() => setStatusNote(''), 2000);
   }
 
+  function handleSelectSuggestion(s: Suggestion) {
+    setDropoff({ lat: s.lat, lng: s.lng });
+    setDestination(s.name);
+    setSuggestions([]);
+    setRiderStep('OPTIONS');
+  }
+
+  function handleConfirmOptions() {
+    setRiderStep('CONFIRM');
+  }
+
+  function handleBackToSearch() {
+    setRiderStep('SEARCH');
+  }
+
+  async function handleRequestRide() {
+    setRiderStep('MATCHING');
+    await requestRideAction();
+    if (matchTimerRef.current) window.clearTimeout(matchTimerRef.current);
+    matchTimerRef.current = window.setTimeout(() => {
+      assignDriver();
+      setRiderStep('EN_ROUTE');
+      // Simulate driver arrival and auto-start ride for rider flow
+      matchTimerRef.current = window.setTimeout(() => {
+        startRideAction();
+        setRiderStep('IN_RIDE');
+      }, 2500);
+    }, 1600);
+  }
+
+  async function handleStartRide() {
+    await startRideAction();
+    setRiderStep('IN_RIDE');
+  }
+
+  async function handleCompleteRide() {
+    await completeRideAction();
+    setRiderStep('COMPLETED');
+  }
+
   return (
     <div className="app">
       <Header userName={userName} authToken={authToken} />
@@ -374,36 +525,46 @@ export default function App() {
                   </div>
                 </div>
               )}
-              <div className="ride-panel">
-                <div className="panel-header">Driver Profile</div>
-                <div className="stack">
-                  <div className="ride-metric">
-                    {persona === 'AGENT' ? 'AI Agent Driver' : 'Human Driver'}
+              {role === 'DRIVER' && (
+                <div className="ride-panel">
+                  <div className="panel-header">Driver Profile</div>
+                  <div className="stack">
+                    <div className="ride-metric">
+                      {persona === 'AGENT' ? 'AI Agent Driver' : 'Human Driver'}
+                    </div>
+                    <label className="field">
+                      Vehicle
+                      <input value={vehicle} onChange={(e) => setVehicle(e.target.value)} />
+                    </label>
+                    <button className="primary" onClick={registerDriver} disabled={!userId}>
+                      Register Driver
+                    </button>
+                    <button className="ghost" onClick={updateLocation} disabled={!driverId || !pickup}>
+                      Sync Driver GPS
+                    </button>
+                    {statusNote && <div className="ride-metric">{statusNote}</div>}
                   </div>
-                  <label className="field">
-                    Vehicle
-                    <input value={vehicle} onChange={(e) => setVehicle(e.target.value)} />
-                  </label>
-                  <button className="primary" onClick={registerDriver} disabled={!userId || role !== 'DRIVER'}>
-                    Register Driver
-                  </button>
-                  <button className="ghost" onClick={updateLocation} disabled={!driverId || !pickup || role !== 'DRIVER'}>
-                    Sync Driver GPS
-                  </button>
-                  {statusNote && <div className="ride-metric">{statusNote}</div>}
                 </div>
-              </div>
+              )}
               {role === 'RIDER' && (
-                <RidePanel
-                  ride={ride}
+                <RiderFlow
+                  step={riderStep}
                   destination={destination}
+                  suggestions={suggestions}
+                  searching={searching}
+                  pickupLabel={pickupLabel}
+                  selectedOption={selectedOption}
+                  options={options}
+                  etaLabel={routeSummary ? `${routeSummary.durationMin} min` : '—'}
+                  fareLabel={selectedOption ? `${(selectedOption.fareCents / 100).toFixed(2)} ALIEN` : '--'}
                   onDestinationChange={setDestination}
-                  onRequest={requestRideAction}
-                  canRequest={canRequest}
-                  onAssignDriver={assignDriver}
-                  onStart={startRideAction}
-                  onComplete={completeRideAction}
-                  onReset={resetRide}
+                  onSelectSuggestion={handleSelectSuggestion}
+                  onSelectOption={setSelectedOptionId}
+                  onBack={handleBackToSearch}
+                  onConfirm={handleConfirmOptions}
+                  onRequest={handleRequestRide}
+                  onStart={handleStartRide}
+                  onComplete={handleCompleteRide}
                 />
               )}
           {ride.status === 'COMPLETED' && role === 'RIDER' && (
