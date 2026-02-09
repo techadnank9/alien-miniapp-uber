@@ -99,6 +99,15 @@ input[type='checkbox'] {
   min-height: 420px;
 }
 
+.qr {
+  display: inline-flex;
+  padding: 12px;
+  border-radius: 16px;
+  border: 1px solid var(--line);
+  background: #0b121b;
+  align-self: flex-start;
+}
+
 .marker {
   width: 28px;
   height: 28px;

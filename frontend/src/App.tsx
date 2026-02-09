@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { io } from 'socket.io-client';
-import { useAlien, usePayment } from '@alien_org/react';
+import { useAlien, useLaunchParams, usePayment } from '@alien_org/react';
+import { QRCodeCanvas } from 'qrcode.react';
 import {
   acceptRide,
   authAlien,
@@ -55,6 +56,7 @@ export default function App() {
   const alien = useAlien();
   const authToken = alien.authToken ?? '';
   const isBridgeAvailable = alien.isBridgeAvailable ?? false;
+  const launchParams = useLaunchParams();
   const payment = usePayment();
   const [userName, setUserName] = useState<string>('Rider');
   const [userId, setUserId] = useState<string>('');
@@ -88,6 +90,7 @@ export default function App() {
   const [statusNote, setStatusNote] = useState<string>('');
   const socketRef = useRef<ReturnType<typeof io> | null>(null);
   const matchTimerRef = useRef<number | null>(null);
+  const [shareUrl, setShareUrl] = useState<string>('');
 
   useEffect(() => {
     let mounted = true;
@@ -111,6 +114,21 @@ export default function App() {
       mounted = false;
     };
   }, [authToken]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    setShareUrl(window.location.href);
+  }, []);
+
+  useEffect(() => {
+    if (!launchParams) return;
+    const name =
+      (launchParams as any).user?.name ||
+      (launchParams as any).user?.username ||
+      (launchParams as any).user?.first_name ||
+      (launchParams as any).user?.displayName;
+    if (name) setUserName(name);
+  }, [launchParams]);
 
   useEffect(() => {
     if (!pickup) return;
@@ -495,7 +513,23 @@ export default function App() {
     <div className="app">
       <Header userName={userName} authToken={authToken} />
       <main className="layout">
-        {!hasEntered ? (
+        {!isBridgeAvailable ? (
+          <div className="ride-panel">
+            <div className="panel-header">Open in Alien App</div>
+            <div className="ride-metric">
+              This mini app requires the Alien host to access your profile, wallet, and GPS.
+            </div>
+            {shareUrl && (
+              <div className="stack">
+                <div className="ride-metric">Scan to open in Alien:</div>
+                <div className="qr">
+                  <QRCodeCanvas value={shareUrl} size={180} bgColor="#0b121b" fgColor="#f1f5f9" />
+                </div>
+                <div className="muted">{shareUrl}</div>
+              </div>
+            )}
+          </div>
+        ) : !hasEntered ? (
           <RoleGate
             userName={userName}
             persona={persona}
