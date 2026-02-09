@@ -72,6 +72,7 @@ export default function App() {
   const [pickup, setPickup] = useState<{ lat: number; lng: number } | null>(null);
   const [pickupLabel, setPickupLabel] = useState<string>('Detecting location…');
   const [locEnabled, setLocEnabled] = useState(false);
+  const [locStatus, setLocStatus] = useState<'idle' | 'requesting' | 'granted' | 'denied'>('idle');
   const [dropoff, setDropoff] = useState<{ lat: number; lng: number } | null>(null);
   const [drivers, setDrivers] = useState<
     { id: string; isAi: boolean; vehicle: string; lat?: number | null; lng?: number | null }[]
@@ -198,20 +199,16 @@ export default function App() {
       (pos) => {
         const next = { lat: pos.coords.latitude, lng: pos.coords.longitude };
         setPickup(next);
+        setLocStatus('granted');
       },
       () => {
+        setLocStatus('denied');
         setStatusNote('Location permission denied');
       },
       { enableHighAccuracy: true, maximumAge: 5000, timeout: 10000 }
     );
     return () => navigator.geolocation.clearWatch(watchId);
   }, [locEnabled]);
-
-  useEffect(() => {
-    if (!isBridgeAvailable || locationRequested || role !== 'RIDER') return;
-    requestLocation();
-    setLocationRequested(true);
-  }, [isBridgeAvailable, locationRequested, role]);
 
   useEffect(() => {
     if (!pickup) return;
@@ -242,12 +239,15 @@ export default function App() {
       setStatusNote('Geolocation not supported on this device');
       return;
     }
+    setLocStatus('requesting');
     navigator.geolocation.getCurrentPosition(
       (pos) => {
         setPickup({ lat: pos.coords.latitude, lng: pos.coords.longitude });
         setLocEnabled(true);
+        setLocStatus('granted');
       },
       () => {
+        setLocStatus('denied');
         setStatusNote('Location permission denied');
       },
       { enableHighAccuracy: true, timeout: 10000 }
@@ -689,8 +689,11 @@ export default function App() {
               )}
               {role === 'RIDER' && !pickup && (
                 <button className="ghost" onClick={requestLocation}>
-                  Enable Location
+                  {locStatus === 'requesting' ? 'Requesting location…' : 'Enable Location'}
                 </button>
+              )}
+              {role === 'RIDER' && locStatus === 'denied' && (
+                <div className="ride-metric">Location blocked. Enable it in Alien App settings.</div>
               )}
           {ride.status === 'COMPLETED' && role === 'RIDER' && (
             <button className="primary" onClick={payWithAlienAction} disabled={!authToken}>
