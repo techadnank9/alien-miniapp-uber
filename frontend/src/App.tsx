@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { io } from 'socket.io-client';
-import { useAlien, useLaunchParams, usePayment } from '@alien_org/react';
+import { isMethodSupported, useAlien, useLaunchParams, usePayment } from '@alien_org/react';
 import {
   acceptRide,
   authAlien,
@@ -142,6 +142,10 @@ export default function App() {
   const ALIEN_RECIPIENT = 'aln1qqqqqqspqqqqqqqqgdpfwvjytv47dcyx';
   const ALIEN_DECIMALS = 6;
   const [shareUrl, setShareUrl] = useState<string>('');
+  const paymentMethodSupported = useMemo(
+    () => isMethodSupported('payment:request', alien.contractVersion),
+    [alien.contractVersion]
+  );
 
   useEffect(() => {
     let mounted = true;
@@ -684,6 +688,13 @@ export default function App() {
                   <div className="ride-metric">
                     Paid: {paymentPaid ? 'true' : 'false'} · Cancelled: {paymentCancelled ? 'true' : 'false'} · Failed:{' '}
                     {paymentFailed ? 'true' : 'false'}
+                  </div>
+                  <div className="ride-metric">Bridge available: {alien.isBridgeAvailable ? 'true' : 'false'}</div>
+                  <div className="ride-metric">
+                    Contract version: {alien.contractVersion ?? 'unknown'}
+                  </div>
+                  <div className="ride-metric">
+                    payment:request supported: {paymentMethodSupported ? 'true' : 'false'}
                   </div>
                   {paymentTxHash && <div className="ride-metric">Tx: {paymentTxHash}</div>}
                   {paymentErrorCode && <div className="ride-metric">Error: {paymentErrorCode}</div>}
