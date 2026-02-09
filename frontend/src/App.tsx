@@ -138,6 +138,25 @@ export default function App() {
   }, [launchParams]);
 
   useEffect(() => {
+    if (!authToken) return;
+    const controller = new AbortController();
+    const ssoBaseUrl = 'https://sso.alien-api.com';
+    fetch(`${ssoBaseUrl}/oauth/userinfo`, {
+      headers: { Authorization: `Bearer ${authToken}` },
+      signal: controller.signal
+    })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        const name = data?.name || data?.preferred_username || data?.username;
+        if (name) setUserName(name);
+      })
+      .catch(() => {
+        // ignore if userinfo fails
+      });
+    return () => controller.abort();
+  }, [authToken]);
+
+  useEffect(() => {
     if (!pickup) return;
     listDrivers(pickup.lat, pickup.lng)
       .then((res) => setDrivers(res.drivers))
@@ -431,12 +450,17 @@ export default function App() {
         amount: '1200',
         rideId: ride.id
       });
+      if ('supported' in payment && payment.supported === false) {
+        setStatusNote('Alien payment not supported on this host');
+        return;
+      }
       await payment.pay({
         recipient: invoiceRes.recipient,
         amount: invoiceRes.amount,
         network: 'alien',
         token: 'ALIEN',
-        invoice: invoiceRes.invoice
+        invoice: invoiceRes.invoice,
+        title: 'SpookyRide'
       });
       setStatusNote('Payment successful');
     } catch {
