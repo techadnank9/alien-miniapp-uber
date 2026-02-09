@@ -90,6 +90,7 @@ export default function App() {
   const [statusNote, setStatusNote] = useState<string>('');
   const socketRef = useRef<ReturnType<typeof io> | null>(null);
   const matchTimerRef = useRef<number | null>(null);
+  const MINIAPP_URL = 'https://alien.app/miniapp/spookyride';
   const [shareUrl, setShareUrl] = useState<string>('');
 
   useEffect(() => {
@@ -116,8 +117,7 @@ export default function App() {
   }, [authToken]);
 
   useEffect(() => {
-    if (typeof window === 'undefined') return;
-    setShareUrl(window.location.href);
+    setShareUrl(MINIAPP_URL);
   }, []);
 
   useEffect(() => {
