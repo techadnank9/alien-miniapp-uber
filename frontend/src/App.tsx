@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { io } from 'socket.io-client';
-import { isMethodSupported, useAlien, useLaunchParams, usePayment } from '@alien_org/react';
+import { useAlien, useLaunchParams, usePayment } from '@alien_org/react';
 import {
   acceptRide,
   authAlien,
@@ -56,32 +56,7 @@ export default function App() {
   const alien = useAlien();
   const authToken = alien.authToken ?? '';
   const launchParams = useLaunchParams();
-  const {
-    pay,
-    status: paymentStatus,
-    isLoading: paymentLoading,
-    isPaid: paymentPaid,
-    isCancelled: paymentCancelled,
-    isFailed: paymentFailed,
-    txHash: paymentTxHash,
-    errorCode: paymentErrorCode,
-    error: paymentError,
-    reset: resetPayment,
-    supported: paymentSupported
-  } = usePayment({
-    onPaid: () => {
-      setStatusNote('Payment confirmed');
-      setTimeout(() => setStatusNote(''), 1200);
-    },
-    onCancelled: () => {
-      setStatusNote('Payment cancelled');
-      setTimeout(() => setStatusNote(''), 1200);
-    },
-    onFailed: (errorCode) => {
-      setStatusNote(`Payment failed: ${errorCode}`);
-      setTimeout(() => setStatusNote(''), 1600);
-    }
-  });
+  const payment = usePayment();
   const [userName, setUserName] = useState<string>('Rider');
   const [userId, setUserId] = useState<string>('');
   const [role, setRole] = useState<UserRole>('RIDER');
@@ -92,6 +67,8 @@ export default function App() {
   const [driverIsAi, setDriverIsAi] = useState<boolean>(false);
   const [vehicle, setVehicle] = useState<string>('Alien EV • 42-AZ');
   const [ride, setRide] = useState<Ride>(initialRide);
+  const [walletBalance, setWalletBalance] = useState<number>(1.25);
+  const [showPayment, setShowPayment] = useState(false);
   const [pendingAmount, setPendingAmount] = useState(0.05);
   const [pendingLabel, setPendingLabel] = useState('Alien Standard');
   const [destination, setDestination] = useState('');
@@ -140,12 +117,7 @@ export default function App() {
   const FIXED_PICKUP = { lat: 37.7897, lng: -122.4011 };
   const MINIAPP_URL = 'https://alien.app/miniapp/spookyride';
   const ALIEN_RECIPIENT = 'aln1qqqqqqspqqqqqqqqgdpfwvjytv47dcyx';
-  const ALIEN_DECIMALS = 6;
   const [shareUrl, setShareUrl] = useState<string>('');
-  const paymentMethodSupported = useMemo(
-    () => isMethodSupported('payment:request', alien.contractVersion),
-    [alien.contractVersion]
-  );
 
   useEffect(() => {
     let mounted = true;
@@ -156,6 +128,7 @@ export default function App() {
       };
     }
     if (!authToken) {
+      setStatusNote('Open in Alien Mini App to authenticate');
       return () => {
         mounted = false;
       };
@@ -394,11 +367,11 @@ export default function App() {
 
   const selectedOption = options.find((o) => o.id === selectedOptionId) ?? null;
 
-  async function requestRideAction(rideId?: string) {
+  async function requestRideAction() {
     if (!canRequest) return;
     if (!pickup || !dropoff) return;
     setRide({
-      id: rideId ?? `ride-${Math.floor(Math.random() * 9999)}`,
+      id: `ride-${Math.floor(Math.random() * 9999)}`,
       pickup: pickupLabel,
       dropoff: destination,
       status: 'MATCHING',
@@ -425,6 +398,13 @@ export default function App() {
   async function completeRideAction() {
     if (!ride.id) return;
     setRide((r) => ({ ...r, status: 'COMPLETED', etaMinutes: 0 }));
+  }
+
+  async function payWithAlienAction() {
+    if (!ride.id) return;
+    setWalletBalance((b) => Math.max(0, b - pendingAmount));
+    setStatusNote('Payment confirmed');
+    setTimeout(() => setStatusNote(''), 1200);
   }
 
   function resetRide() {
@@ -524,51 +504,16 @@ export default function App() {
 
   async function handleRequestRide() {
     if (!selectedOption) return;
-    if (!paymentSupported) {
-      setStatusNote('Payments not supported in this environment');
-      setTimeout(() => setStatusNote(''), 1600);
-      return;
-    }
-    if (!pickup || !dropoff) return;
-
-    const amountAlien = selectedOption.fareCents / 100;
-    const amountUnits = Math.round(amountAlien * 10 ** ALIEN_DECIMALS).toString();
-    const rideId = `ride-${Math.floor(Math.random() * 9999)}`;
-    setPendingAmount(amountAlien);
+    setPendingAmount(selectedOption.fareCents / 100);
     setPendingLabel(selectedOption.label);
+    setShowPayment(true);
+  }
 
-    try {
-      if (resetPayment) resetPayment();
-      let invoice = `inv_${rideId}`;
-      let recipient = ALIEN_RECIPIENT;
-      if (authToken) {
-        const invoiceRes = await createAlienInvoice({
-          token: authToken,
-          amount: amountUnits,
-          rideId
-        });
-        invoice = invoiceRes.invoice ?? invoice;
-        recipient = invoiceRes.recipient ?? recipient;
-      }
-      await pay({
-        recipient,
-        amount: amountUnits,
-        token: 'ALIEN',
-        network: 'alien',
-        invoice,
-        item: {
-          title: `SpookyRide • ${selectedOption.label}`,
-          iconUrl: 'https://alien.app/favicon.ico',
-          quantity: 1
-        },
-        test: 'paid'
-      });
-    } catch {
-      return;
-    }
-
+  async function confirmPaymentAndRequest() {
+    setShowPayment(false);
     setRiderStep('MATCHING');
-    await requestRideAction(rideId);
+    await requestRideAction();
+    payWithAlienAction();
     if (matchTimerRef.current) window.clearTimeout(matchTimerRef.current);
     matchTimerRef.current = window.setTimeout(() => {
       assignDriver();
@@ -679,29 +624,6 @@ export default function App() {
                   onComplete={handleCompleteRide}
                 />
               )}
-              <div className="ride-panel">
-                <div className="panel-header">System Status</div>
-                <div className="stack">
-                  <div className="ride-metric">Payments supported: {paymentSupported ? 'true' : 'false'}</div>
-                  <div className="ride-metric">Payment status: {paymentStatus}</div>
-                  <div className="ride-metric">Payment loading: {paymentLoading ? 'true' : 'false'}</div>
-                  <div className="ride-metric">
-                    Paid: {paymentPaid ? 'true' : 'false'} · Cancelled: {paymentCancelled ? 'true' : 'false'} · Failed:{' '}
-                    {paymentFailed ? 'true' : 'false'}
-                  </div>
-                  <div className="ride-metric">Bridge available: {alien.isBridgeAvailable ? 'true' : 'false'}</div>
-                  <div className="ride-metric">
-                    Contract version: {alien.contractVersion ?? 'unknown'}
-                  </div>
-                  <div className="ride-metric">
-                    payment:request supported: {paymentMethodSupported ? 'true' : 'false'}
-                  </div>
-                  {paymentTxHash && <div className="ride-metric">Tx: {paymentTxHash}</div>}
-                  {paymentErrorCode && <div className="ride-metric">Error: {paymentErrorCode}</div>}
-                  {paymentError && <div className="ride-metric">Error detail: {paymentError.message}</div>}
-                  <div className="ride-metric">Auth token: {authToken ? 'present' : 'missing'}</div>
-                </div>
-              </div>
               {role === 'RIDER' && !pickup && (
                 <button className="ghost" onClick={requestLocation}>
                   {locStatus === 'requesting' ? 'Setting pickup…' : 'Set Pickup Location'}
@@ -740,6 +662,20 @@ export default function App() {
           </>
         )}
       </main>
+      {showPayment && (
+        <div className="modal-backdrop">
+          <div className="modal">
+            <div className="modal-title">Confirm Payment</div>
+            <div className="modal-sub">SpookyRide • {pendingLabel}</div>
+            <div className="modal-amount">{pendingAmount.toFixed(2)} ALIEN</div>
+            <div className="modal-balance">Wallet balance: {walletBalance.toFixed(2)} ALIEN</div>
+            <div className="row">
+              <button className="ghost" onClick={() => setShowPayment(false)}>Deny</button>
+              <button className="primary" onClick={confirmPaymentAndRequest}>Confirm</button>
+            </div>
+          </div>
+        </div>
+      )}
       <StatusBar ride={ride} />
     </div>
   );
