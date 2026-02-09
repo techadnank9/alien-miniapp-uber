@@ -240,15 +240,34 @@ export default function App() {
       return;
     }
     setLocStatus('requesting');
+    if ('permissions' in navigator && typeof navigator.permissions.query === 'function') {
+      navigator.permissions
+        .query({ name: 'geolocation' as PermissionName })
+        .then((result) => {
+          if (result.state === 'denied') {
+            setLocStatus('denied');
+            setStatusNote('Location permission denied in app settings');
+          }
+        })
+        .catch(() => {});
+    }
     navigator.geolocation.getCurrentPosition(
       (pos) => {
         setPickup({ lat: pos.coords.latitude, lng: pos.coords.longitude });
         setLocEnabled(true);
         setLocStatus('granted');
       },
-      () => {
+      (err) => {
         setLocStatus('denied');
-        setStatusNote('Location permission denied');
+        const reason =
+          err?.code === 1
+            ? 'Location permission denied'
+            : err?.code === 2
+              ? 'Location unavailable'
+              : err?.code === 3
+                ? 'Location request timed out'
+                : 'Location failed';
+        setStatusNote(reason);
       },
       { enableHighAccuracy: true, timeout: 10000 }
     );
