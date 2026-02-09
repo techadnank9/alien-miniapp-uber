@@ -71,6 +71,7 @@ export default function App() {
   const [destination, setDestination] = useState('');
   const [pickup, setPickup] = useState<{ lat: number; lng: number } | null>(null);
   const [pickupLabel, setPickupLabel] = useState<string>('Detecting location…');
+  const [locEnabled, setLocEnabled] = useState(false);
   const [dropoff, setDropoff] = useState<{ lat: number; lng: number } | null>(null);
   const [drivers, setDrivers] = useState<
     { id: string; isAi: boolean; vehicle: string; lat?: number | null; lng?: number | null }[]
@@ -81,6 +82,11 @@ export default function App() {
   const [routeGeoJson, setRouteGeoJson] = useState<RouteLineString | null>(null);
   const [routeSteps, setRouteSteps] = useState<string[]>([]);
   const [routeSummary, setRouteSummary] = useState<{ distanceKm: number; durationMin: number } | null>(null);
+  const [activeRideCoords, setActiveRideCoords] = useState<{
+    pickup: { lat: number; lng: number };
+    dropoff: { lat: number; lng: number };
+  } | null>(null);
+  const [driverStage, setDriverStage] = useState<'TO_PICKUP' | 'TO_DROPOFF' | null>(null);
   const [riderStep, setRiderStep] = useState<
     'SEARCH' | 'OPTIONS' | 'CONFIRM' | 'MATCHING' | 'EN_ROUTE' | 'IN_RIDE' | 'COMPLETED'
   >('SEARCH');
@@ -90,6 +96,7 @@ export default function App() {
   const [statusNote, setStatusNote] = useState<string>('');
   const socketRef = useRef<ReturnType<typeof io> | null>(null);
   const matchTimerRef = useRef<number | null>(null);
+  const [locationRequested, setLocationRequested] = useState(false);
   const MINIAPP_URL = 'https://alien.app/miniapp/spookyride';
   const [shareUrl, setShareUrl] = useState<string>('');
 
@@ -163,7 +170,11 @@ export default function App() {
   }, [ride.id]);
 
   useEffect(() => {
-    if (!navigator.geolocation) return;
+    if (!locEnabled) return;
+    if (!navigator.geolocation) {
+      setStatusNote('Geolocation not supported on this device');
+      return;
+    }
     const watchId = navigator.geolocation.watchPosition(
       (pos) => {
         const next = { lat: pos.coords.latitude, lng: pos.coords.longitude };
@@ -175,7 +186,13 @@ export default function App() {
       { enableHighAccuracy: true, maximumAge: 5000, timeout: 10000 }
     );
     return () => navigator.geolocation.clearWatch(watchId);
-  }, []);
+  }, [locEnabled]);
+
+  useEffect(() => {
+    if (!isBridgeAvailable || locationRequested || role !== 'RIDER') return;
+    requestLocation();
+    setLocationRequested(true);
+  }, [isBridgeAvailable, locationRequested, role]);
 
   useEffect(() => {
     if (!pickup) return;
@@ -201,6 +218,23 @@ export default function App() {
     };
   }, [pickup]);
 
+  function requestLocation() {
+    if (!navigator.geolocation) {
+      setStatusNote('Geolocation not supported on this device');
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setPickup({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+        setLocEnabled(true);
+      },
+      () => {
+        setStatusNote('Location permission denied');
+      },
+      { enableHighAccuracy: true, timeout: 10000 }
+    );
+  }
+
   const canRequest = useMemo(
     () => destination.trim().length > 2 && !!pickup && !!dropoff,
     [destination, pickup, dropoff]
@@ -209,14 +243,26 @@ export default function App() {
   useEffect(() => {
     const controller = new AbortController();
     async function fetchDirections() {
-      if (!pickup || !dropoff) {
+      let from: { lat: number; lng: number } | null = null;
+      let to: { lat: number; lng: number } | null = null;
+
+      if (role === 'DRIVER' && activeRideCoords && pickup) {
+        from = pickup;
+        to = driverStage === 'TO_DROPOFF' ? activeRideCoords.dropoff : activeRideCoords.pickup;
+      } else if (pickup && dropoff) {
+        from = pickup;
+        to = dropoff;
+      }
+
+      if (!from || !to) {
         setRouteGeoJson(null);
         setRouteSteps([]);
         setRouteSummary(null);
         return;
       }
+
       const baseUrl = import.meta.env.VITE_OSRM_URL || 'https://router.project-osrm.org';
-      const url = `${baseUrl}/route/v1/driving/${pickup.lng},${pickup.lat};${dropoff.lng},${dropoff.lat}?overview=full&geometries=geojson&steps=true`;
+      const url = `${baseUrl}/route/v1/driving/${from.lng},${from.lat};${to.lng},${to.lat}?overview=full&geometries=geojson&steps=true`;
       try {
         const res = await fetch(url, { signal: controller.signal });
         if (!res.ok) return;
@@ -244,7 +290,7 @@ export default function App() {
 
     fetchDirections();
     return () => controller.abort();
-  }, [pickup, dropoff]);
+  }, [pickup, dropoff, role, activeRideCoords, driverStage]);
 
   useEffect(() => {
     if (destination.trim().length < 3) {
@@ -440,6 +486,7 @@ export default function App() {
 
   async function acceptRideAction(rideId: string) {
     if (!driverId) return;
+    const selected = openRides.find((r) => r.id === rideId);
     try {
       const res = await acceptRide(rideId, driverId);
       setRide({
@@ -456,6 +503,13 @@ export default function App() {
         status: 'DRIVER_ASSIGNED'
       });
     }
+    if (selected) {
+      setActiveRideCoords({
+        pickup: { lat: selected.pickupLat, lng: selected.pickupLng },
+        dropoff: { lat: selected.dropLat, lng: selected.dropLng }
+      });
+      setDriverStage('TO_PICKUP');
+    }
   }
 
   async function updateLocation() {
@@ -467,6 +521,15 @@ export default function App() {
       setStatusNote('Backend offline — GPS cached locally');
     }
     setTimeout(() => setStatusNote(''), 2000);
+  }
+
+  function driverStartTrip() {
+    setDriverStage('TO_DROPOFF');
+  }
+
+  function driverCompleteTrip() {
+    setDriverStage(null);
+    setActiveRideCoords(null);
   }
 
   function handleSelectSuggestion(s: Suggestion) {
@@ -601,6 +664,11 @@ export default function App() {
                   onComplete={handleCompleteRide}
                 />
               )}
+              {role === 'RIDER' && !pickup && (
+                <button className="ghost" onClick={requestLocation}>
+                  Enable Location
+                </button>
+              )}
           {ride.status === 'COMPLETED' && role === 'RIDER' && (
             <button className="primary" onClick={payWithAlienAction} disabled={!authToken}>
               Pay with Alien
@@ -614,6 +682,26 @@ export default function App() {
                   onAccept={acceptRideAction}
                   directions={routeSteps}
                 />
+              )}
+              {role === 'DRIVER' && activeRideCoords && (
+                <div className="ride-panel">
+                  <div className="panel-header">Active Ride</div>
+                  <div className="stack">
+                    <div className="ride-metric">
+                      {driverStage === 'TO_DROPOFF' ? 'On trip' : 'Heading to pickup'}
+                    </div>
+                    {driverStage === 'TO_PICKUP' && (
+                      <button className="primary" onClick={driverStartTrip}>
+                        Start Trip
+                      </button>
+                    )}
+                    {driverStage === 'TO_DROPOFF' && (
+                      <button className="primary" onClick={driverCompleteTrip}>
+                        Complete Trip
+                      </button>
+                    )}
+                  </div>
+                </div>
               )}
             </section>
           </>
