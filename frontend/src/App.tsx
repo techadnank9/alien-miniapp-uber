@@ -70,7 +70,7 @@ export default function App() {
   const [ride, setRide] = useState<Ride>(initialRide);
   const [destination, setDestination] = useState('');
   const [pickup, setPickup] = useState<{ lat: number; lng: number } | null>(null);
-  const [pickupLabel, setPickupLabel] = useState<string>('Detecting location…');
+  const [pickupLabel, setPickupLabel] = useState<string>('Frontier Tower, San Francisco');
   const [locEnabled, setLocEnabled] = useState(false);
   const [locStatus, setLocStatus] = useState<'idle' | 'requesting' | 'granted' | 'denied'>('idle');
   const [dropoff, setDropoff] = useState<{ lat: number; lng: number } | null>(null);
@@ -98,6 +98,7 @@ export default function App() {
   const socketRef = useRef<ReturnType<typeof io> | null>(null);
   const matchTimerRef = useRef<number | null>(null);
   const [locationRequested, setLocationRequested] = useState(false);
+  const FIXED_PICKUP = { lat: 37.7897, lng: -122.4011 };
   const MINIAPP_URL = 'https://alien.app/miniapp/spookyride';
   const [shareUrl, setShareUrl] = useState<string>('');
 
@@ -191,23 +192,8 @@ export default function App() {
 
   useEffect(() => {
     if (!locEnabled) return;
-    if (!navigator.geolocation) {
-      setStatusNote('Geolocation not supported on this device');
-      return;
-    }
-    const watchId = navigator.geolocation.watchPosition(
-      (pos) => {
-        const next = { lat: pos.coords.latitude, lng: pos.coords.longitude };
-        setPickup(next);
-        setLocStatus('granted');
-      },
-      () => {
-        setLocStatus('denied');
-        setStatusNote('Location permission denied');
-      },
-      { enableHighAccuracy: true, maximumAge: 5000, timeout: 10000 }
-    );
-    return () => navigator.geolocation.clearWatch(watchId);
+    setPickup(FIXED_PICKUP);
+    setLocStatus('granted');
   }, [locEnabled]);
 
   useEffect(() => {
@@ -235,42 +221,10 @@ export default function App() {
   }, [pickup]);
 
   function requestLocation() {
-    if (!navigator.geolocation) {
-      setStatusNote('Geolocation not supported on this device');
-      return;
-    }
     setLocStatus('requesting');
-    if ('permissions' in navigator && typeof navigator.permissions.query === 'function') {
-      navigator.permissions
-        .query({ name: 'geolocation' as PermissionName })
-        .then((result) => {
-          if (result.state === 'denied') {
-            setLocStatus('denied');
-            setStatusNote('Location permission denied in app settings');
-          }
-        })
-        .catch(() => {});
-    }
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        setPickup({ lat: pos.coords.latitude, lng: pos.coords.longitude });
-        setLocEnabled(true);
-        setLocStatus('granted');
-      },
-      (err) => {
-        setLocStatus('denied');
-        const reason =
-          err?.code === 1
-            ? 'Location permission denied'
-            : err?.code === 2
-              ? 'Location unavailable'
-              : err?.code === 3
-                ? 'Location request timed out'
-                : 'Location failed';
-        setStatusNote(reason);
-      },
-      { enableHighAccuracy: true, timeout: 10000 }
-    );
+    setPickup(FIXED_PICKUP);
+    setLocEnabled(true);
+    setLocStatus('granted');
   }
 
   const canRequest = useMemo(
@@ -370,27 +324,21 @@ export default function App() {
       label: 'Alien Standard',
       subtitle: 'Everyday rides',
       etaMin: routeSummary ? routeSummary.durationMin : 6,
-      fareCents: routeSummary
-        ? Math.round((1.5 + routeSummary.distanceKm * 0.6 + routeSummary.durationMin * 0.25) * 100)
-        : 350
+      fareCents: 5
     },
     {
       id: 'xl',
       label: 'Alien XL',
       subtitle: 'More space',
       etaMin: routeSummary ? routeSummary.durationMin + 2 : 8,
-      fareCents: routeSummary
-        ? Math.round((2.2 + routeSummary.distanceKm * 0.8 + routeSummary.durationMin * 0.35) * 100)
-        : 500
+      fareCents: 8
     },
     {
       id: 'black',
       label: 'Alien Black',
       subtitle: 'Premium',
       etaMin: routeSummary ? routeSummary.durationMin + 4 : 10,
-      fareCents: routeSummary
-        ? Math.round((3.2 + routeSummary.distanceKm * 1.2 + routeSummary.durationMin * 0.5) * 100)
-        : 800
+      fareCents: 10
     }
   ];
 
@@ -591,6 +539,25 @@ export default function App() {
 
   async function handleRequestRide() {
     setRiderStep('MATCHING');
+    if (selectedOption && authToken) {
+      try {
+        const invoiceRes = await createAlienInvoice({
+          token: authToken,
+          amount: (selectedOption.fareCents / 100).toFixed(2),
+          rideId: ride.id
+        });
+        await payment.pay({
+          recipient: invoiceRes.recipient,
+          amount: invoiceRes.amount,
+          network: 'alien',
+          token: 'ALIEN',
+          invoice: invoiceRes.invoice
+        });
+      } catch {
+        setStatusNote('Payment failed or cancelled');
+        return;
+      }
+    }
     await requestRideAction();
     if (matchTimerRef.current) window.clearTimeout(matchTimerRef.current);
     matchTimerRef.current = window.setTimeout(() => {
@@ -710,9 +677,6 @@ export default function App() {
                 <button className="ghost" onClick={requestLocation}>
                   {locStatus === 'requesting' ? 'Requesting location…' : 'Enable Location'}
                 </button>
-              )}
-              {role === 'RIDER' && locStatus === 'denied' && (
-                <div className="ride-metric">Location blocked. Enable it in Alien App settings.</div>
               )}
           {ride.status === 'COMPLETED' && role === 'RIDER' && (
             <button className="primary" onClick={payWithAlienAction} disabled={!authToken}>
