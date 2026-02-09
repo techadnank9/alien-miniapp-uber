@@ -694,6 +694,21 @@ export default function App() {
                   onComplete={handleCompleteRide}
                 />
               )}
+              <div className="ride-panel">
+                <div className="panel-header">Debug</div>
+                <div className="ride-metric">Bridge: {String(isBridgeAvailable)}</div>
+                <div className="ride-metric">
+                  Payment supported: {'supported' in payment ? String(payment.supported) : 'unknown'}
+                </div>
+                <div className="ride-metric">Auth token: {authToken ? 'present' : 'missing'}</div>
+                <button
+                  className="ghost"
+                  onClick={() => payWithAlienAction()}
+                  disabled={!authToken}
+                >
+                  Test Payment
+                </button>
+              </div>
               {role === 'RIDER' && !pickup && (
                 <button className="ghost" onClick={requestLocation}>
                   {locStatus === 'requesting' ? 'Requesting location…' : 'Enable Location'}
