@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { io } from 'socket.io-client';
 import { useAlien, useLaunchParams, usePayment } from '@alien_org/react';
-import { QRCodeCanvas } from 'qrcode.react';
 import {
   acceptRide,
   authAlien,
@@ -53,9 +52,9 @@ const initialRide: Ride = {
 };
 
 export default function App() {
+  const DEMO = true;
   const alien = useAlien();
   const authToken = alien.authToken ?? '';
-  const isBridgeAvailable = alien.isBridgeAvailable ?? false;
   const launchParams = useLaunchParams();
   const payment = usePayment();
   const [userName, setUserName] = useState<string>('Rider');
@@ -64,10 +63,14 @@ export default function App() {
   const [persona, setPersona] = useState<Persona | null>(null);
   const [mode, setMode] = useState<Mode | null>(null);
   const [hasEntered, setHasEntered] = useState(false);
-  const [driverId, setDriverId] = useState<string | null>(null);
+  const [driverId, setDriverId] = useState<string | null>('demo-driver');
   const [driverIsAi, setDriverIsAi] = useState<boolean>(false);
   const [vehicle, setVehicle] = useState<string>('Alien EV • 42-AZ');
   const [ride, setRide] = useState<Ride>(initialRide);
+  const [walletBalance, setWalletBalance] = useState<number>(1.25);
+  const [showPayment, setShowPayment] = useState(false);
+  const [pendingAmount, setPendingAmount] = useState(0.05);
+  const [pendingLabel, setPendingLabel] = useState('Alien Standard');
   const [destination, setDestination] = useState('');
   const [pickup, setPickup] = useState<{ lat: number; lng: number } | null>(null);
   const [pickupLabel, setPickupLabel] = useState<string>('Frontier Tower, San Francisco');
@@ -76,10 +79,22 @@ export default function App() {
   const [dropoff, setDropoff] = useState<{ lat: number; lng: number } | null>(null);
   const [drivers, setDrivers] = useState<
     { id: string; isAi: boolean; vehicle: string; lat?: number | null; lng?: number | null }[]
-  >([]);
+  >([
+    { id: 'd1', isAi: true, vehicle: 'Alien AV • AX-7', lat: 37.7875, lng: -122.4012 },
+    { id: 'd2', isAi: false, vehicle: 'Alien EV • 42-AZ', lat: 37.7858, lng: -122.4042 }
+  ]);
   const [openRides, setOpenRides] = useState<
     { id: string; pickupLat: number; pickupLng: number; dropLat: number; dropLng: number; status: string }[]
-  >([]);
+  >([
+    {
+      id: 'ride-101',
+      pickupLat: 37.7897,
+      pickupLng: -122.4011,
+      dropLat: 37.781,
+      dropLng: -122.409,
+      status: 'MATCHING'
+    }
+  ]);
   const [routeGeoJson, setRouteGeoJson] = useState<RouteLineString | null>(null);
   const [routeSteps, setRouteSteps] = useState<string[]>([]);
   const [routeSummary, setRouteSummary] = useState<{ distanceKm: number; durationMin: number } | null>(null);
@@ -97,6 +112,7 @@ export default function App() {
   const [statusNote, setStatusNote] = useState<string>('');
   const socketRef = useRef<ReturnType<typeof io> | null>(null);
   const matchTimerRef = useRef<number | null>(null);
+  const driverJoinTimerRef = useRef<number | null>(null);
   const [locationRequested, setLocationRequested] = useState(false);
   const FIXED_PICKUP = { lat: 37.7897, lng: -122.4011 };
   const MINIAPP_URL = 'https://alien.app/miniapp/spookyride';
@@ -105,6 +121,12 @@ export default function App() {
 
   useEffect(() => {
     let mounted = true;
+    if (DEMO) {
+      setUserName('Adnan K');
+      return () => {
+        mounted = false;
+      };
+    }
     if (!authToken) {
       setStatusNote('Open in Alien Mini App to authenticate');
       return () => {
@@ -131,7 +153,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!launchParams) return;
+    if (!launchParams || DEMO) return;
     const name =
       (launchParams as any).user?.name ||
       (launchParams as any).user?.username ||
@@ -141,7 +163,7 @@ export default function App() {
   }, [launchParams]);
 
   useEffect(() => {
-    if (!authToken) return;
+    if (!authToken || DEMO) return;
     const controller = new AbortController();
     const ssoBaseUrl = 'https://sso.alien-api.com';
     fetch(`${ssoBaseUrl}/oauth/userinfo`, {
@@ -347,35 +369,15 @@ export default function App() {
 
   async function requestRideAction() {
     if (!canRequest) return;
-    if (!pickup || !dropoff || !userId) return;
-    try {
-      const res = await requestRide({
-        riderId: userId,
-        pickupLat: pickup.lat,
-        pickupLng: pickup.lng,
-        dropLat: dropoff.lat,
-        dropLng: dropoff.lng,
-        fareCents: 1200
-      });
-      setRide({
-        id: res.ride.id,
-        pickup: pickupLabel,
-        dropoff: destination,
-        status: res.ride.status,
-        etaMinutes: routeSummary?.durationMin ?? 6,
-        fareCents: selectedOption?.fareCents ?? res.ride.fareCents
-      });
-    } catch {
-      setStatusNote('Backend offline — using local ride flow');
-      setRide({
-        id: 'demo-ride',
-        pickup: pickupLabel,
-        dropoff: destination,
-        status: 'MATCHING',
-        etaMinutes: routeSummary?.durationMin ?? 6,
-        fareCents: selectedOption?.fareCents ?? 1200
-      });
-    }
+    if (!pickup || !dropoff) return;
+    setRide({
+      id: `ride-${Math.floor(Math.random() * 9999)}`,
+      pickup: pickupLabel,
+      dropoff: destination,
+      status: 'MATCHING',
+      etaMinutes: routeSummary?.durationMin ?? 6,
+      fareCents: selectedOption?.fareCents ?? 5
+    });
   }
 
   function assignDriver() {
@@ -390,60 +392,19 @@ export default function App() {
 
   async function startRideAction() {
     if (!ride.id) return;
-    try {
-      const res = await startRide(ride.id);
-      setRide((r) => ({ ...r, status: res.ride.status, etaMinutes: 12 }));
-    } catch {
-      setStatusNote('Backend offline — local ride started');
-      setRide((r) => ({ ...r, status: 'IN_RIDE', etaMinutes: 12 }));
-    }
+    setRide((r) => ({ ...r, status: 'IN_RIDE', etaMinutes: 12 }));
   }
 
   async function completeRideAction() {
     if (!ride.id) return;
-    try {
-      const res = await completeRide(ride.id);
-      setRide((r) => ({ ...r, status: res.ride.status, etaMinutes: 0 }));
-    } catch {
-      setStatusNote('Backend offline — local ride completed');
-      setRide((r) => ({ ...r, status: 'COMPLETED', etaMinutes: 0 }));
-    }
+    setRide((r) => ({ ...r, status: 'COMPLETED', etaMinutes: 0 }));
   }
 
   async function payWithAlienAction() {
-    if (!authToken || !ride.id) return;
-    try {
-      let recipient = ALIEN_RECIPIENT;
-      let amount = selectedOption ? (selectedOption.fareCents / 100).toFixed(2) : '0.05';
-      let invoice = `ride-${ride.id}`;
-      try {
-        const invoiceRes = await createAlienInvoice({
-          token: authToken,
-          amount,
-          rideId: ride.id
-        });
-        recipient = invoiceRes.recipient ?? recipient;
-        amount = invoiceRes.amount ?? amount;
-        invoice = invoiceRes.invoice ?? invoice;
-      } catch {
-        // fallback to direct payment
-      }
-      if ('supported' in payment && payment.supported === false) {
-        setStatusNote('Alien payment not supported on this host');
-        return;
-      }
-      await payment.pay({
-        recipient,
-        amount,
-        network: 'alien',
-        token: 'ALIEN',
-        invoice
-      });
-      setStatusNote('Payment successful');
-    } catch {
-      setStatusNote('Payment failed or cancelled');
-    }
-    setTimeout(() => setStatusNote(''), 2000);
+    if (!ride.id) return;
+    setWalletBalance((b) => Math.max(0, b - pendingAmount));
+    setStatusNote('Payment confirmed');
+    setTimeout(() => setStatusNote(''), 1200);
   }
 
   function resetRide() {
@@ -472,17 +433,15 @@ export default function App() {
     if (nextRole === 'RIDER') {
       setRiderStep('SEARCH');
     }
+    if (nextRole === 'DRIVER') {
+      setDriverId('demo-driver');
+      setStatusNote('Driver ready');
+    }
   }
 
   async function registerDriver() {
-    if (!userId) return;
-    try {
-      const res = await createDriver({ userId, vehicle, isAi: driverIsAi });
-      setDriverId(res.driver.id);
-    } catch {
-      setStatusNote('Backend offline — driver registered locally');
-      setDriverId('demo-driver');
-    }
+    setStatusNote('Driver registered');
+    setTimeout(() => setStatusNote(''), 1200);
   }
 
   async function acceptRideAction(rideId: string) {
@@ -514,13 +473,8 @@ export default function App() {
   }
 
   async function updateLocation() {
-    if (!pickup || !driverId) return;
-    try {
-      await updateDriverLocation({ driverId, lat: pickup.lat, lng: pickup.lng });
-      setStatusNote('Driver location updated');
-    } catch {
-      setStatusNote('Backend offline — GPS cached locally');
-    }
+    if (!pickup) return;
+    setStatusNote('Driver location updated');
     setTimeout(() => setStatusNote(''), 2000);
   }
 
@@ -549,37 +503,17 @@ export default function App() {
   }
 
   async function handleRequestRide() {
+    if (!selectedOption) return;
+    setPendingAmount(selectedOption.fareCents / 100);
+    setPendingLabel(selectedOption.label);
+    setShowPayment(true);
+  }
+
+  async function confirmPaymentAndRequest() {
+    setShowPayment(false);
     setRiderStep('MATCHING');
-    if (selectedOption && authToken) {
-      try {
-        let recipient = ALIEN_RECIPIENT;
-        let amount = (selectedOption.fareCents / 100).toFixed(2);
-        let invoice = `ride-${ride.id}`;
-        try {
-          const invoiceRes = await createAlienInvoice({
-            token: authToken,
-            amount,
-            rideId: ride.id
-          });
-          recipient = invoiceRes.recipient ?? recipient;
-          amount = invoiceRes.amount ?? amount;
-          invoice = invoiceRes.invoice ?? invoice;
-        } catch {
-          // fallback to direct payment
-        }
-        await payment.pay({
-          recipient,
-          amount,
-          network: 'alien',
-          token: 'ALIEN',
-          invoice
-        });
-      } catch {
-        setStatusNote('Payment failed or cancelled');
-        return;
-      }
-    }
     await requestRideAction();
+    payWithAlienAction();
     if (matchTimerRef.current) window.clearTimeout(matchTimerRef.current);
     matchTimerRef.current = window.setTimeout(() => {
       assignDriver();
@@ -590,6 +524,26 @@ export default function App() {
         setRiderStep('IN_RIDE');
       }, 2500);
     }, 1600);
+    if (driverJoinTimerRef.current) window.clearTimeout(driverJoinTimerRef.current);
+    driverJoinTimerRef.current = window.setTimeout(() => {
+      setDrivers((d) => [
+        ...d,
+        { id: 'd3', isAi: false, vehicle: 'Alien EV • 88-ZX', lat: 37.7882, lng: -122.4018 }
+      ]);
+      setOpenRides((r) => [
+        ...r,
+        {
+          id: `ride-${Math.floor(Math.random() * 9999)}`,
+          pickupLat: 37.7897,
+          pickupLng: -122.4011,
+          dropLat: dropoff?.lat ?? 37.781,
+          dropLng: dropoff?.lng ?? -122.409,
+          status: 'MATCHING'
+        }
+      ]);
+      setStatusNote('Driver joined the network');
+      setTimeout(() => setStatusNote(''), 1600);
+    }, 30000);
   }
 
   async function handleStartRide() {
@@ -606,23 +560,7 @@ export default function App() {
     <div className="app">
       <Header userName={userName} authToken={authToken} />
       <main className="layout">
-        {!isBridgeAvailable ? (
-          <div className="ride-panel">
-            <div className="panel-header">Open in Alien App</div>
-            <div className="ride-metric">
-              This mini app requires the Alien host to access your profile, wallet, and GPS.
-            </div>
-            {shareUrl && (
-              <div className="stack">
-                <div className="ride-metric">Scan to open in Alien:</div>
-                <div className="qr">
-                  <QRCodeCanvas value={shareUrl} size={180} bgColor="#0b121b" fgColor="#f1f5f9" />
-                </div>
-                <div className="muted">{shareUrl}</div>
-              </div>
-            )}
-          </div>
-        ) : !hasEntered ? (
+        {!hasEntered ? (
           <RoleGate
             userName={userName}
             persona={persona}
@@ -644,14 +582,6 @@ export default function App() {
               }}
             />
             <section className="panel">
-              {!isBridgeAvailable && (
-                <div className="ride-panel">
-                  <div className="panel-header">Alien Mini App Required</div>
-                  <div className="ride-metric">
-                    Open this inside the Alien Mini App to authenticate and pay with Alien Coins.
-                  </div>
-                </div>
-              )}
               {role === 'DRIVER' && (
                 <div className="ride-panel">
                   <div className="panel-header">Driver Profile</div>
@@ -694,31 +624,11 @@ export default function App() {
                   onComplete={handleCompleteRide}
                 />
               )}
-              <div className="ride-panel">
-                <div className="panel-header">Debug</div>
-                <div className="ride-metric">Bridge: {String(isBridgeAvailable)}</div>
-                <div className="ride-metric">
-                  Payment supported: {'supported' in payment ? String(payment.supported) : 'unknown'}
-                </div>
-                <div className="ride-metric">Auth token: {authToken ? 'present' : 'missing'}</div>
-                <button
-                  className="ghost"
-                  onClick={() => payWithAlienAction()}
-                  disabled={!authToken}
-                >
-                  Test Payment
-                </button>
-              </div>
               {role === 'RIDER' && !pickup && (
                 <button className="ghost" onClick={requestLocation}>
-                  {locStatus === 'requesting' ? 'Requesting location…' : 'Enable Location'}
+                  {locStatus === 'requesting' ? 'Setting pickup…' : 'Set Pickup Location'}
                 </button>
               )}
-          {ride.status === 'COMPLETED' && role === 'RIDER' && (
-            <button className="primary" onClick={payWithAlienAction} disabled={!authToken}>
-              Pay with Alien
-            </button>
-          )}
               {role === 'DRIVER' && driverId && (
                 <DriverPanel
                   isAi={driverIsAi}
@@ -752,6 +662,20 @@ export default function App() {
           </>
         )}
       </main>
+      {showPayment && (
+        <div className="modal-backdrop">
+          <div className="modal">
+            <div className="modal-title">Confirm Payment</div>
+            <div className="modal-sub">SpookyRide • {pendingLabel}</div>
+            <div className="modal-amount">{pendingAmount.toFixed(2)} ALIEN</div>
+            <div className="modal-balance">Wallet balance: {walletBalance.toFixed(2)} ALIEN</div>
+            <div className="row">
+              <button className="ghost" onClick={() => setShowPayment(false)}>Deny</button>
+              <button className="primary" onClick={confirmPaymentAndRequest}>Confirm</button>
+            </div>
+          </div>
+        </div>
+      )}
       <StatusBar ride={ride} />
     </div>
   );

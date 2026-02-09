@@ -108,6 +108,47 @@ input[type='checkbox'] {
   align-self: flex-start;
 }
 
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(4, 6, 10, 0.8);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 50;
+}
+
+.modal {
+  width: min(420px, 90vw);
+  background: #0b121b;
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4);
+}
+
+.modal-title {
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.modal-sub {
+  color: var(--muted);
+}
+
+.modal-amount {
+  font-size: 28px;
+  font-weight: 700;
+}
+
+.modal-balance {
+  color: var(--muted);
+  font-size: 13px;
+}
+
 .marker {
   width: 28px;
   height: 28px;
