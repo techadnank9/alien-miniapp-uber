@@ -100,6 +100,7 @@ export default function App() {
   const [locationRequested, setLocationRequested] = useState(false);
   const FIXED_PICKUP = { lat: 37.7897, lng: -122.4011 };
   const MINIAPP_URL = 'https://alien.app/miniapp/spookyride';
+  const ALIEN_RECIPIENT = 'aln1qqqqqqspqqqqqqqqgdpfwvjytv47dcyx';
   const [shareUrl, setShareUrl] = useState<string>('');
 
   useEffect(() => {
@@ -412,21 +413,31 @@ export default function App() {
   async function payWithAlienAction() {
     if (!authToken || !ride.id) return;
     try {
-      const invoiceRes = await createAlienInvoice({
-        token: authToken,
-        amount: '1200',
-        rideId: ride.id
-      });
+      let recipient = ALIEN_RECIPIENT;
+      let amount = selectedOption ? (selectedOption.fareCents / 100).toFixed(2) : '0.05';
+      let invoice = `ride-${ride.id}`;
+      try {
+        const invoiceRes = await createAlienInvoice({
+          token: authToken,
+          amount,
+          rideId: ride.id
+        });
+        recipient = invoiceRes.recipient ?? recipient;
+        amount = invoiceRes.amount ?? amount;
+        invoice = invoiceRes.invoice ?? invoice;
+      } catch {
+        // fallback to direct payment
+      }
       if ('supported' in payment && payment.supported === false) {
         setStatusNote('Alien payment not supported on this host');
         return;
       }
       await payment.pay({
-        recipient: invoiceRes.recipient,
-        amount: invoiceRes.amount,
+        recipient,
+        amount,
         network: 'alien',
         token: 'ALIEN',
-        invoice: invoiceRes.invoice
+        invoice
       });
       setStatusNote('Payment successful');
     } catch {
@@ -541,17 +552,27 @@ export default function App() {
     setRiderStep('MATCHING');
     if (selectedOption && authToken) {
       try {
-        const invoiceRes = await createAlienInvoice({
-          token: authToken,
-          amount: (selectedOption.fareCents / 100).toFixed(2),
-          rideId: ride.id
-        });
+        let recipient = ALIEN_RECIPIENT;
+        let amount = (selectedOption.fareCents / 100).toFixed(2);
+        let invoice = `ride-${ride.id}`;
+        try {
+          const invoiceRes = await createAlienInvoice({
+            token: authToken,
+            amount,
+            rideId: ride.id
+          });
+          recipient = invoiceRes.recipient ?? recipient;
+          amount = invoiceRes.amount ?? amount;
+          invoice = invoiceRes.invoice ?? invoice;
+        } catch {
+          // fallback to direct payment
+        }
         await payment.pay({
-          recipient: invoiceRes.recipient,
-          amount: invoiceRes.amount,
+          recipient,
+          amount,
           network: 'alien',
           token: 'ALIEN',
-          invoice: invoiceRes.invoice
+          invoice
         });
       } catch {
         setStatusNote('Payment failed or cancelled');
