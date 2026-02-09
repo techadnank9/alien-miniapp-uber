@@ -459,8 +459,7 @@ export default function App() {
         amount: invoiceRes.amount,
         network: 'alien',
         token: 'ALIEN',
-        invoice: invoiceRes.invoice,
-        title: 'SpookyRide'
+        invoice: invoiceRes.invoice
       });
       setStatusNote('Payment successful');
     } catch {
